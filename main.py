@@ -47,6 +47,8 @@ class MusicBot(commands.Bot):
         self.playback_start_time = 0
         self.accumulated_time = 0
         self.play_lock = asyncio.Lock()
+        self.queue = [] # Şarkı sırası
+        self.current_data = None # Tekrar çalma için veriyi sakla
         self._manual_stop = False
 
     async def on_ready(self):
@@ -86,28 +88,78 @@ class MusicBot(commands.Bot):
                     data = await loop.run_in_executor(None, lambda: ydl.extract_info(search_str, download=False))
                 
                 if 'entries' in data: data = data['entries'][0]
-                stream_url = data['url']
-                self.current_title = data.get('title', 'Bilinmiyor')
-                self.current_url = data.get('webpage_url', query if query.startswith("http") else None)
-                self.duration = data.get('duration', 0)
                 
-                header_str = "".join([f"{k}: {v}\r\n" for k, v in data.get('http_headers', {}).items()])
-                before_args = FFMPEG_OPTIONS['before_options'] + f' -headers "{header_str}" -ss {start_sec}'
-                
-                def after_playing(error):
-                    if not self._manual_stop and self.loop_mode and self.current_url:
-                        asyncio.run_coroutine_threadsafe(self.play_music(self.current_url), self.loop)
+                # DİREKT OYNAT (Mevcut şarkıyı durdur)
+                return await self._play_url(data, start_sec)
 
-                source = discord.FFmpegPCMAudio(stream_url, executable=FFMPEG_PATH, before_options=before_args, options=FFMPEG_OPTIONS['options'])
-                source = discord.PCMVolumeTransformer(source)
-                source.volume = self.volume
-                self.voice_client.play(source, after=after_playing)
-                self.playback_start_time = time.time()
-                return self.current_title
             except Exception as e:
-                logger.error(e)
+                logger.error(f"HATA: {e}")
                 self._manual_stop = False
                 return None
+
+    async def _play_url(self, data, start_sec=0):
+        self.current_data = data
+        stream_url = data['url']
+        self.current_title = data.get('title', 'Bilinmiyor')
+        self.current_url = data.get('webpage_url', None)
+        self.duration = data.get('duration', 0)
+        
+        header_str = "".join([f"{k}: {v}\r\n" for k, v in data.get('http_headers', {}).items()])
+        before_args = FFMPEG_OPTIONS['before_options'] + f' -headers "{header_str}" -ss {start_sec}'
+        
+        def after_playing(error):
+            if error: logger.error(f"HATA: {error}")
+            if self._manual_stop: return
+
+            # Döngü Açıksa -> Aynı şarkıyı tekrar başlat
+            if self.loop_mode and self.current_data:
+                asyncio.run_coroutine_threadsafe(self._play_url(self.current_data), self.loop)
+            # Sıra Varsa -> Sıradakine geç
+            elif self.queue:
+                next_song = self.queue.pop(0)
+                asyncio.run_coroutine_threadsafe(self._play_url(next_song), self.loop)
+            else:
+                self.current_title = "Beklemede..."
+                self.current_url = None
+                self.duration = 0
+                self.start_offset = 0
+                self.accumulated_time = 0
+                self.current_data = None
+
+        source = discord.FFmpegPCMAudio(stream_url, executable=FFMPEG_PATH, before_options=before_args, options=FFMPEG_OPTIONS['options'])
+        source = discord.PCMVolumeTransformer(source)
+        source.volume = self.volume
+        
+        self.voice_client.play(source, after=after_playing)
+        self.playback_start_time = time.time()
+        return self.current_title
+
+    async def skip_track(self):
+        if self.voice_client and self.voice_client.is_playing():
+            old_loop = self.loop_mode
+            self.loop_mode = False 
+            self.voice_client.stop()
+            self.loop_mode = old_loop
+
+    async def add_to_queue(self, query):
+        """Şarkıyı sıraya ekle (çalmadan)"""
+        try:
+            loop = asyncio.get_event_loop()
+            search_str = query if query.startswith(("http://", "https://")) else f"ytsearch1:{query}"
+            logger.info(f"Sıraya ekleniyor: {query}")
+
+            with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
+                data = await loop.run_in_executor(None, lambda: ydl.extract_info(search_str, download=False))
+            
+            if 'entries' in data: data = data['entries'][0]
+            
+            self.queue.append(data)
+            title = data.get('title', 'Bilinmiyor')
+            logger.info(f"✓ Sıraya eklendi: {title}")
+            return f"Sırada #{len(self.queue)}: {title}"
+        except Exception as e:
+            logger.error(f"Sıraya ekleme hatası: {e}")
+            return None
 
     def get_elapsed_time(self):
         elapsed = self.accumulated_time + self.start_offset
@@ -161,6 +213,14 @@ class App(ctk.CTk):
         self.lbl_status = ctk.CTkLabel(self.sidebar_frame, text="Durum: Çevrimdışı", text_color="gray")
         self.lbl_status.grid(row=2, column=0, padx=20, pady=10)
 
+        # Sıra (Queue) Bölümü
+        self.lbl_queue_title = ctk.CTkLabel(self.sidebar_frame, text="SIRA", font=ctk.CTkFont(size=12, weight="bold"))
+        self.lbl_queue_title.grid(row=3, column=0, padx=20, pady=(20, 5), sticky="w")
+        
+        self.queue_textbox = ctk.CTkTextbox(self.sidebar_frame, height=200, width=180, fg_color=("gray90", "gray15"))
+        self.queue_textbox.grid(row=4, column=0, padx=20, pady=(0, 20), sticky="nsew")
+        self.queue_textbox.configure(state="disabled")  # Sadece okuma modu
+
         # Ses Kontrolü (Dikey, Sidebar'da)
         self.lbl_vol = ctk.CTkLabel(self.sidebar_frame, text="Ses Düzeyi")
         self.lbl_vol.grid(row=7, column=0, padx=20, pady=(10, 0))
@@ -176,10 +236,17 @@ class App(ctk.CTk):
         # Arama Kısmı
         self.entry_search = ctk.CTkEntry(self.main_frame, placeholder_text="Müzik ara veya link yapıştır...", height=40)
         self.entry_search.pack(fill="x", pady=(0, 10))
-        self.entry_search.bind("<Return>", lambda e: self.play_track()) # Enter tuşu ile çalma
+        self.entry_search.bind("<Return>", lambda e: self.play_track())
 
-        self.btn_search = ctk.CTkButton(self.main_frame, text="OYNAT", fg_color="transparent", border_width=2, text_color=("gray10", "#DCE4EE"), command=self.play_track)
-        self.btn_search.pack(fill="x", pady=(0, 20))
+        # Buton Frame (Oynat ve Sıraya Ekle yan yana)
+        self.search_btn_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+        self.search_btn_frame.pack(fill="x", pady=(0, 20))
+        
+        self.btn_search = ctk.CTkButton(self.search_btn_frame, text="▶ OYNAT", fg_color="#3B8ED0", hover_color="#36719F", command=self.play_track)
+        self.btn_search.pack(side="left", fill="x", expand=True, padx=(0, 5))
+        
+        self.btn_add_queue = ctk.CTkButton(self.search_btn_frame, text="+ SIRAYA EKLE", fg_color="transparent", border_width=2, border_color="gray", text_color="white", command=self.add_to_queue)
+        self.btn_add_queue.pack(side="right", fill="x", expand=True, padx=(5, 0))
 
         # Şarkı Bilgi Kartı
         self.track_card = ctk.CTkFrame(self.main_frame, fg_color=("gray80", "gray20"))
@@ -210,6 +277,11 @@ class App(ctk.CTk):
                                       fg_color="#3B8ED0", hover_color="#36719F",
                                       command=self.toggle_pause)
         self.btn_play.pack(side="left", padx=20)
+        
+        self.btn_skip = ctk.CTkButton(self.controls_frame, text="⏭", width=50, height=40, 
+                                      fg_color="transparent", border_width=1, border_color="gray", text_color="white",
+                                      command=self.skip_track)
+        self.btn_skip.pack(side="left", padx=10)
 
         # Durdur butonu kaldırıldı
         
@@ -230,8 +302,23 @@ class App(ctk.CTk):
                     t_m, t_s = divmod(total, 60)
                     self.lbl_timer.configure(text=f"{e_m:02d}:{e_s:02d} / {t_m:02d}:{t_s:02d}")
             self.lbl_title.configure(text=bot.current_title)
+            self.update_queue_display()  # Sırayı sürekli güncelle
         except: pass
         self.after(1000, self.update_ui_loop)
+
+    def update_queue_display(self):
+        """Sıra listesini güncelle"""
+        self.queue_textbox.configure(state="normal")
+        self.queue_textbox.delete("1.0", "end")
+        
+        if not bot.queue:
+            self.queue_textbox.insert("1.0", "Sıra boş")
+        else:
+            for i, song_data in enumerate(bot.queue, 1):
+                title = song_data.get('title', 'Bilinmiyor')[:35]  # Uzun başlıkları kısalt
+                self.queue_textbox.insert("end", f"{i}. {title}\n")
+        
+        self.queue_textbox.configure(state="disabled")
 
     def on_seek_drag(self, value):
         if bot.duration > 0:
@@ -270,6 +357,10 @@ class App(ctk.CTk):
         self.slider_seek.set(0)
         self.lbl_timer.configure(text="00:00 / 00:00")
 
+    
+    def skip_track(self):
+        asyncio.run_coroutine_threadsafe(bot.skip_track(), bot.loop)
+
     def join_voice(self):
         owner_id = CONFIG.get('OWNER_ID', "")
         self.lbl_status.configure(text="Aranıyor...", text_color="orange")
@@ -279,6 +370,19 @@ class App(ctk.CTk):
         name = await bot.join_user_channel(user_id)
         if name: self.lbl_status.configure(text=f"Bağlı: {name}", text_color="#3B8ED0")
         else: self.lbl_status.configure(text="Kanal bulunamadı", text_color="red")
+
+    def add_to_queue(self):
+        query = self.entry_search.get()
+        if query:
+            self.lbl_status.configure(text="Sıraya ekleniyor...", text_color="orange")
+            asyncio.run_coroutine_threadsafe(self.update_queue_task(query), bot.loop)
+
+    async def update_queue_task(self, query):
+        result = await bot.add_to_queue(query)
+        if result:
+            self.lbl_status.configure(text=result, text_color="#3B8ED0")
+        else:
+            self.lbl_status.configure(text="Sıraya eklenemedi", text_color="red")
 
     def play_track(self):
         query = self.entry_search.get()
