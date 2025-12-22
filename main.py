@@ -50,6 +50,48 @@ class MusicBot(commands.Bot):
         self.queue = [] # Şarkı sırası
         self.current_data = None # Tekrar çalma için veriyi sakla
         self._manual_stop = False
+        self.favorites = self.load_favorites()
+
+    def load_favorites(self):
+        """Favorileri JSON'dan yükle"""
+        try:
+            with open('favorites.json', 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except FileNotFoundError:
+            return []
+
+    def save_favorites(self):
+        """Favorileri JSON'a kaydet"""
+        try:
+            with open('favorites.json', 'w', encoding='utf-8') as f:
+                json.dump(self.favorites, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"Favori kaydetme hatası: {e}")
+
+    def add_to_favorites(self):
+        """Çalan şarkıyı favorilere ekle"""
+        if not self.current_url or not self.current_title:
+            return False
+        
+        # Zaten favorilerde mi kontrol et
+        for fav in self.favorites:
+            if fav.get('url') == self.current_url:
+                return False  # Zaten var
+        
+        fav_data = {
+            'title': self.current_title,
+            'url': self.current_url,
+            'duration': self.duration
+        }
+        self.favorites.append(fav_data)
+        self.save_favorites()
+        logger.info(f"⭐ Favorilere eklendi: {self.current_title}")
+        return True
+
+    def remove_from_favorites(self, url):
+        """Favorilerden çıkar"""
+        self.favorites = [f for f in self.favorites if f.get('url') != url]
+        self.save_favorites()
 
     async def on_ready(self):
         print(f"\n⚡ SİSTEM HAZIR: {self.user}\n")
@@ -69,7 +111,19 @@ class MusicBot(commands.Bot):
 
     async def play_music(self, query, start_sec=0):
         async with self.play_lock:
-            if not self.voice_client or not self.voice_client.is_connected(): return None
+            # EĞER BOT BAĞLI DEĞİLSE OTOMATIĞE KATIL
+            if not self.voice_client or not self.voice_client.is_connected():
+                owner_id = CONFIG.get('OWNER_ID', '')
+                if owner_id:
+                    logger.info("Bot bağlı değil, otomatik katlıyor...")
+                    channel_name = await self.join_user_channel(owner_id)
+                    if not channel_name:
+                        logger.error("Kullanıcı ses kanalında değil!")
+                        return None
+                else:
+                    logger.error("OWNER_ID config'de tanımlı değil!")
+                    return None
+
             if self.voice_client.is_playing() or self.voice_client.is_paused():
                 self._manual_stop = True
                 self.voice_client.stop()
@@ -87,7 +141,17 @@ class MusicBot(commands.Bot):
                 with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
                     data = await loop.run_in_executor(None, lambda: ydl.extract_info(search_str, download=False))
                 
-                if 'entries' in data: data = data['entries'][0]
+                # Arama sonuçlarını güvenli şekilde kontrol et
+                if 'entries' in data:
+                    if not data['entries'] or len(data['entries']) == 0:
+                        logger.error("Arama sonuç bulunamadı!")
+                        return None
+                    data = data['entries'][0]
+                
+                # Veri geçerliliğini kontrol et
+                if not data or 'url' not in data:
+                    logger.error("Geçersiz video verisi!")
+                    return None
                 
                 # DİREKT OYNAT (Mevcut şarkıyı durdur)
                 return await self._play_url(data, start_sec)
@@ -151,12 +215,24 @@ class MusicBot(commands.Bot):
             with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
                 data = await loop.run_in_executor(None, lambda: ydl.extract_info(search_str, download=False))
             
-            if 'entries' in data: data = data['entries'][0]
+            # Arama sonuçlarını güvenli şekilde kontrol et
+            if 'entries' in data:
+                if not data['entries'] or len(data['entries']) == 0:
+                    logger.error("Arama sonuç bulunamadı!")
+                    return None
+                data = data['entries'][0]
+            
+            # Veri geçerliliğini kontrol et
+            if not data or 'url' not in data:
+                logger.error("Geçersiz video verisi!")
+                return None
             
             self.queue.append(data)
             title = data.get('title', 'Bilinmiyor')
             logger.info(f"✓ Sıraya eklendi: {title}")
-            return f"Sırada #{len(self.queue)}: {title}"
+            # Durum çubuğu için kısaltılmış başlık
+            short_title = title[:40] + "..." if len(title) > 40 else title
+            return f"Sırada #{len(self.queue)}: {short_title}"
         except Exception as e:
             logger.error(f"Sıraya ekleme hatası: {e}")
             return None
@@ -210,7 +286,7 @@ class App(ctk.CTk):
         self.sidebar_button_1 = ctk.CTkButton(self.sidebar_frame, text="Bağlan / Katıl", command=self.join_voice)
         self.sidebar_button_1.grid(row=1, column=0, padx=20, pady=10)
 
-        self.lbl_status = ctk.CTkLabel(self.sidebar_frame, text="Durum: Çevrimdışı", text_color="gray")
+        self.lbl_status = ctk.CTkLabel(self.sidebar_frame, text="Durum: Çevrimdışı", text_color="gray", wraplength=180)
         self.lbl_status.grid(row=2, column=0, padx=20, pady=10)
 
         # Sıra (Queue) Bölümü
@@ -221,7 +297,16 @@ class App(ctk.CTk):
         self.queue_textbox.grid(row=4, column=0, padx=20, pady=(0, 20), sticky="nsew")
         self.queue_textbox.configure(state="disabled")  # Sadece okuma modu
 
-        # Ses Kontrolü (Dikey, Sidebar'da)
+        # Favoriler Bölümü
+        self.lbl_fav_title = ctk.CTkLabel(self.sidebar_frame, text="FAVORİLER", font=ctk.CTkFont(size=12, weight="bold"))
+        self.lbl_fav_title.grid(row=5, column=0, padx=20, pady=(10, 5), sticky="w")
+        
+        self.fav_textbox = ctk.CTkTextbox(self.sidebar_frame, height=150, width=180, fg_color=("gray90", "gray15"))
+        self.fav_textbox.grid(row=6, column=0, padx=20, pady=(0, 20), sticky="nsew")
+        self.fav_textbox.configure(state="disabled")
+        self.fav_textbox.bind("<Button-1>", self.on_favorite_click)
+
+        # Ses Kontrolü
         self.lbl_vol = ctk.CTkLabel(self.sidebar_frame, text="Ses Düzeyi")
         self.lbl_vol.grid(row=7, column=0, padx=20, pady=(10, 0))
         self.slider_vol = ctk.CTkSlider(self.sidebar_frame, from_=0, to=1, command=self.change_volume)
@@ -282,6 +367,11 @@ class App(ctk.CTk):
                                       fg_color="transparent", border_width=1, border_color="gray", text_color="white",
                                       command=self.skip_track)
         self.btn_skip.pack(side="left", padx=10)
+        
+        self.btn_favorite = ctk.CTkButton(self.controls_frame, text="⭐", width=50, height=40,
+                                         fg_color="transparent", border_width=1, border_color="gold", text_color="gold",
+                                         command=self.toggle_favorite)
+        self.btn_favorite.pack(side="left", padx=10)
 
         # Durdur butonu kaldırıldı
         
@@ -301,8 +391,11 @@ class App(ctk.CTk):
                     e_m, e_s = divmod(elapsed, 60)
                     t_m, t_s = divmod(total, 60)
                     self.lbl_timer.configure(text=f"{e_m:02d}:{e_s:02d} / {t_m:02d}:{t_s:02d}")
-            self.lbl_title.configure(text=bot.current_title)
+            # Başlığı kısalt (max 60 karakter)
+            title_text = bot.current_title[:60] + "..." if len(bot.current_title) > 60 else bot.current_title
+            self.lbl_title.configure(text=title_text)
             self.update_queue_display()  # Sırayı sürekli güncelle
+            self.update_favorites_display()  # Favorileri güncelle
         except: pass
         self.after(1000, self.update_ui_loop)
 
@@ -319,6 +412,42 @@ class App(ctk.CTk):
                 self.queue_textbox.insert("end", f"{i}. {title}\n")
         
         self.queue_textbox.configure(state="disabled")
+
+    def update_favorites_display(self):
+        """Favoriler listesini güncelle"""
+        self.fav_textbox.configure(state="normal")
+        self.fav_textbox.delete("1.0", "end")
+        
+        if not bot.favorites:
+            self.fav_textbox.insert("1.0", "Favori yok\n\nÇalan şarkıyı ⭐ ile ekle")
+        else:
+            for i, fav in enumerate(bot.favorites, 1):
+                title = fav.get('title', 'Bilinmiyor')[:30]
+                self.fav_textbox.insert("end", f"{i}. {title}\n")
+        
+        self.fav_textbox.configure(state="disabled")
+
+    def on_favorite_click(self, event):
+        """Favorilerden tıklanan şarkıyı çal"""
+        try:
+            # Tıklanan satırı bul
+            index = self.fav_textbox.index("@%s,%s" % (event.x, event.y))
+            line_num = int(index.split('.')[0]) - 1
+            
+            if 0 <= line_num < len(bot.favorites):
+                fav = bot.favorites[line_num]
+                url = fav.get('url')
+                if url:
+                    self.lbl_status.configure(text="Favoriden yükleniyor...", text_color="gold")
+                    asyncio.run_coroutine_threadsafe(self.update_info_task(url), bot.loop)
+        except: pass
+
+    def toggle_favorite(self):
+        """Çalan şarkıyı favorilere ekle/çıkar"""
+        if bot.add_to_favorites():
+            self.lbl_status.configure(text="⭐ Favorilere eklendi", text_color="gold")
+        else:
+            self.lbl_status.configure(text="Zaten favorilerde", text_color="orange")
 
     def on_seek_drag(self, value):
         if bot.duration > 0:
@@ -368,8 +497,12 @@ class App(ctk.CTk):
 
     async def update_join_task(self, user_id):
         name = await bot.join_user_channel(user_id)
-        if name: self.lbl_status.configure(text=f"Bağlı: {name}", text_color="#3B8ED0")
-        else: self.lbl_status.configure(text="Kanal bulunamadı", text_color="red")
+        if name: 
+            # Kanal adını kısalt
+            short_name = name[:25] + "..." if len(name) > 25 else name
+            self.lbl_status.configure(text=f"Bağlı: {short_name}", text_color="#3B8ED0")
+        else: 
+            self.lbl_status.configure(text="Kanal bulunamadı", text_color="red")
 
     def add_to_queue(self):
         query = self.entry_search.get()
@@ -380,7 +513,9 @@ class App(ctk.CTk):
     async def update_queue_task(self, query):
         result = await bot.add_to_queue(query)
         if result:
-            self.lbl_status.configure(text=result, text_color="#3B8ED0")
+            # Mesajı kısalt (max 50 karakter)
+            short_result = result[:50] + "..." if len(result) > 50 else result
+            self.lbl_status.configure(text=short_result, text_color="#3B8ED0")
         else:
             self.lbl_status.configure(text="Sıraya eklenemedi", text_color="red")
 
@@ -393,8 +528,11 @@ class App(ctk.CTk):
 
     async def update_info_task(self, query):
         title = await bot.play_music(query)
-        if title: self.lbl_status.configure(text="Oynatılıyor", text_color="#3B8ED0")
-        else: self.lbl_status.configure(text="Hata oluştu", text_color="red")
+        if title:
+            self.lbl_status.configure(text="Oynatılıyor", text_color="#3B8ED0")
+        else:
+            self.lbl_status.configure(text="Hata: Sonuç bulunamadı veya bağlantı yok", text_color="red")
+            self.btn_play.configure(text="OYNAT ▶", fg_color="#3B8ED0")
 
     def on_closing(self):
         try:
