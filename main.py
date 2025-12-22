@@ -9,6 +9,8 @@ import time
 import logging
 import sys
 import json
+from pynput import keyboard
+from pynput.keyboard import Key
 
 # --- KONFİGÜRASYON ---
 def load_config():
@@ -263,6 +265,63 @@ bot = MusicBot()
 def run_bot_thread():
     bot.run(TOKEN)
 
+# --- MEDYA TUŞU DİNLEYİCİSİ ---
+class MediaKeyListener:
+    def __init__(self, app_instance):
+        self.app = app_instance
+        self.listener = None
+        
+        # Config'den hotkey'i oku
+        hotkey_name = CONFIG.get('HOTKEY', 'home').lower()
+        
+        # Desteklenen tuşlar
+        key_map = {
+            'home': Key.home,
+            'end': Key.end,
+            'insert': Key.insert,
+            'page_down': Key.page_down,
+            'page_up': Key.page_up,
+            'delete': Key.delete,
+            'f1': Key.f1,
+            'f2': Key.f2,
+            'f3': Key.f3,
+            'f4': Key.f4,
+            'f5': Key.f5,
+            'f6': Key.f6,
+            'f7': Key.f7,
+            'f8': Key.f8,
+            'f9': Key.f9,
+            'f10': Key.f10,
+            'f11': Key.f11,
+            'f12': Key.f12,
+        }
+        
+        self.hotkey = key_map.get(hotkey_name, Key.home)
+        logger.info(f"🎹 Hotkey ayarlandı: {hotkey_name.upper()}")
+        
+    def on_press(self, key):
+        try:
+            # Config'den okunan tuşu dinle
+            if key == self.hotkey:
+                logger.info("⏯ Hotkey: Play/Pause")
+                # Direkt bot fonksiyonunu çağır (hızlı)
+                if bot.voice_client:
+                    if bot.voice_client.is_playing():
+                        asyncio.run_coroutine_threadsafe(bot.pause_music(), bot.loop)
+                    elif bot.voice_client.is_paused():
+                        asyncio.run_coroutine_threadsafe(bot.resume_music(), bot.loop)
+        except AttributeError:
+            pass
+    
+    def start(self):
+        self.listener = keyboard.Listener(on_press=self.on_press)
+        self.listener.start()
+        logger.info("⌨️ Medya tuşu dinleyicisi başlatıldı")
+    
+    def stop(self):
+        if self.listener:
+            self.listener.stop()
+
 # --- 3. YENİ ARAYÜZ (Dashboard Style) ---
 class App(ctk.CTk):
     def __init__(self):
@@ -379,6 +438,10 @@ class App(ctk.CTk):
         self.switch_loop.pack(side="left", padx=20)
 
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
+        
+        # Medya tuşu dinleyicisini başlat
+        self.media_listener = MediaKeyListener(self)
+        self.media_listener.start()
 
     # --- FONKSİYONLAR ---
     def update_ui_loop(self):
@@ -536,6 +599,9 @@ class App(ctk.CTk):
 
     def on_closing(self):
         try:
+            # Medya dinleyiciyi durdur
+            if hasattr(self, 'media_listener'):
+                self.media_listener.stop()
             if bot.voice_client: asyncio.run_coroutine_threadsafe(bot.voice_client.disconnect(), bot.loop)
             asyncio.run_coroutine_threadsafe(bot.close(), bot.loop)
         except: pass
