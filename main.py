@@ -9,6 +9,7 @@ import time
 import logging
 import sys
 import json
+import hashlib
 from pynput import keyboard
 from pynput.keyboard import Key
 
@@ -22,7 +23,8 @@ def load_config():
 
 CONFIG = load_config()
 TOKEN = CONFIG['TOKEN']
-FFMPEG_PATH = CONFIG.get('FFMPEG_PATH', r"C:\ffmpeg\bin\ffmpeg.exe") 
+FFMPEG_PATH = CONFIG.get('FFMPEG_PATH', r"C:\ffmpeg\bin\ffmpeg.exe")
+CACHE_DIR = "songs_cache" 
 
 # --- LOGLAMA ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s', handlers=[logging.StreamHandler(sys.stdout)])
@@ -52,7 +54,9 @@ class MusicBot(commands.Bot):
         self.queue = [] # Şarkı sırası
         self.current_data = None # Tekrar çalma için veriyi sakla
         self._manual_stop = False
+        self.is_playing_from_cache = False  # Cache'den mi çalıyor
         self.favorites = self.load_favorites()
+        self.clean_orphaned_cache()
 
     def load_favorites(self):
         """Favorileri JSON'dan yükle"""
@@ -69,6 +73,97 @@ class MusicBot(commands.Bot):
                 json.dump(self.favorites, f, ensure_ascii=False, indent=2)
         except Exception as e:
             logger.error(f"Favori kaydetme hatası: {e}")
+
+    def get_cache_filename(self, url, title=None):
+        """URL ve başlıktan cache dosya adı oluştur"""
+        if title:
+            # Başlığı dosya adı için güvenli hale getir
+            safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).strip()
+            safe_title = safe_title.replace(' ', '_')[:100]  # Max 100 karakter
+            return f"{safe_title}.mp3"
+        else:
+            # Başlık yoksa hash kullan (fallback)
+            url_hash = hashlib.md5(url.encode()).hexdigest()
+            return f"{url_hash}.mp3"
+
+    def get_cached_file_path(self, url, title=None):
+        """Cache dosya yolunu döndür"""
+        if not os.path.exists(CACHE_DIR):
+            os.makedirs(CACHE_DIR)
+        return os.path.join(CACHE_DIR, self.get_cache_filename(url, title))
+
+    def is_favorite_cached(self, url, title=None):
+        """Favorinin cache'de olup olmadığını kontrol et"""
+        cache_path = self.get_cached_file_path(url, title)
+        return os.path.exists(cache_path)
+
+    async def download_favorite_to_cache(self, url, title):
+        """Favori şarkıyı cache'e indir"""
+        try:
+            cache_path = self.get_cached_file_path(url, title)
+            
+            # Zaten cache'de varsa indirme
+            if os.path.exists(cache_path):
+                logger.info(f"✓ Zaten cache'de: {title}")
+                return cache_path
+
+            logger.info(f"⬇ Cache'e indiriliyor: {title}")
+            
+            # yt-dlp ile indir (FFmpegExtractAudio .mp3 ekleyeceği için outtmpl'den .mp3'ü çıkar)
+            cache_path_without_ext = cache_path.replace('.mp3', '')
+            ydl_opts = {
+                'format': 'bestaudio/best',
+                'outtmpl': cache_path_without_ext,
+                'quiet': True,
+                'no_warnings': True,
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '192',
+                }],
+            }
+            
+            loop = asyncio.get_event_loop()
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                await loop.run_in_executor(None, lambda: ydl.download([url]))
+            
+            logger.info(f"✓ Cache'e indirildi: {title}")
+            return cache_path
+            
+        except Exception as e:
+            logger.error(f"Cache indirme hatası: {e}")
+            return None
+
+    def clean_orphaned_cache(self):
+        """Favorilerde olmayan cache dosyalarını temizle"""
+        try:
+            if not os.path.exists(CACHE_DIR):
+                return
+            
+            # Favorilerdeki dosya adlarını al
+            valid_filenames = set()
+            for fav in self.favorites:
+                url = fav.get('url')
+                title = fav.get('title')
+                if url and title:
+                    valid_filenames.add(self.get_cache_filename(url, title))
+            
+            # Cache klasöründeki dosyaları kontrol et
+            cleaned = 0
+            for filename in os.listdir(CACHE_DIR):
+                if filename not in valid_filenames:
+                    file_path = os.path.join(CACHE_DIR, filename)
+                    try:
+                        os.remove(file_path)
+                        cleaned += 1
+                    except Exception as e:
+                        logger.error(f"Cache silme hatası: {e}")
+            
+            if cleaned > 0:
+                logger.info(f"🧹 {cleaned} orphaned cache dosyası temizlendi")
+                
+        except Exception as e:
+            logger.error(f"Cache temizleme hatası: {e}")
 
     def add_to_favorites(self):
         """Çalan şarkıyı favorilere ekle"""
@@ -88,15 +183,112 @@ class MusicBot(commands.Bot):
         self.favorites.append(fav_data)
         self.save_favorites()
         logger.info(f"⭐ Favorilere eklendi: {self.current_title}")
+        
+        # Cache'e indir (async olarak arka planda)
+        asyncio.run_coroutine_threadsafe(
+            self.download_favorite_to_cache(self.current_url, self.current_title),
+            self.loop
+        )
+        
         return True
 
     def remove_from_favorites(self, url):
-        """Favorilerden çıkar"""
+        """Favorilerden çıkar ve cache'i sil"""
+        # Önce title'ı bul (silmeden önce)
+        fav = next((f for f in self.favorites if f.get('url') == url), None)
+        title = fav.get('title') if fav else None
+        
         self.favorites = [f for f in self.favorites if f.get('url') != url]
         self.save_favorites()
+        
+        # Cache dosyasını sil
+        try:
+            cache_path = self.get_cached_file_path(url, title)
+            if os.path.exists(cache_path):
+                os.remove(cache_path)
+                logger.info(f"🗑 Cache dosyası silindi")
+        except Exception as e:
+            logger.error(f"Cache silme hatası: {e}")
 
     async def on_ready(self):
         print(f"\n⚡ SİSTEM HAZIR: {self.user}\n")
+
+    async def play_from_cache(self, url, title, duration, start_sec=0):
+        """Cache'den direkt oynat"""
+        try:
+            cache_path = self.get_cached_file_path(url, title)
+            
+            if not os.path.exists(cache_path):
+                logger.warning(f"Cache dosyası bulunamadı, stream'e geçiliyor")
+                return await self.play_music(url, start_sec)
+            
+            # Bot bağlı değilse otomatik katıl
+            if not self.voice_client or not self.voice_client.is_connected():
+                owner_id = CONFIG.get('OWNER_ID', '')
+                if owner_id:
+                    logger.info("Bot bağlı değil, otomatik katılıyor...")
+                    channel_name = await self.join_user_channel(owner_id)
+                    if not channel_name:
+                        logger.error("Kullanıcı ses kanalında değil!")
+                        return None
+                else:
+                    logger.error("OWNER_ID config'de tanımlı değil!")
+                    return None
+            
+            # Çalan varsa durdur
+            if self.voice_client.is_playing() or self.voice_client.is_paused():
+                self._manual_stop = True
+                self.voice_client.stop()
+                await asyncio.sleep(0.5)
+                self._manual_stop = False
+            
+            self.current_title = title
+            self.current_url = url
+            self.duration = duration
+            self.start_offset = start_sec
+            self.accumulated_time = 0
+            self.is_playing_from_cache = True  # Cache'den çalıyor
+            
+            logger.info(f"💾 Cache'den oynatılıyor: {title} (başlangıç: {start_sec}s)")
+            
+            def after_playing(error):
+                if error: logger.error(f"HATA: {error}")
+                if self._manual_stop: return
+
+                # Döngü Açıksa -> Aynı şarkıyı tekrar başlat
+                if self.loop_mode and self.current_data:
+                    asyncio.run_coroutine_threadsafe(self._play_url(self.current_data), self.loop)
+                # Sıra Varsa -> Sıradakine geç
+                elif self.queue:
+                    next_song = self.queue.pop(0)
+                    asyncio.run_coroutine_threadsafe(self._play_url(next_song), self.loop)
+                else:
+                    self.current_title = "Beklemede..."
+                    self.current_url = None
+                    self.duration = 0
+                    self.start_offset = 0
+                    self.accumulated_time = 0
+                    self.current_data = None
+                    self.is_playing_from_cache = False
+            
+            # FFmpeg ile seek (local dosya için sadece -ss kullan, reconnect parametreleri stream için)
+            before_args = f'-ss {start_sec}' if start_sec > 0 else ''
+            if before_args:
+                source = discord.FFmpegPCMAudio(cache_path, executable=FFMPEG_PATH, before_options=before_args, options=FFMPEG_OPTIONS['options'])
+            else:
+                source = discord.FFmpegPCMAudio(cache_path, executable=FFMPEG_PATH, options=FFMPEG_OPTIONS['options'])
+            source = discord.PCMVolumeTransformer(source)
+            source.volume = self.volume
+            
+            self.voice_client.play(source, after=after_playing)
+            self.playback_start_time = time.time()
+            
+            return title
+            
+        except Exception as e:
+            logger.error(f"Cache oynatma hatası: {e}")
+            self.is_playing_from_cache = False
+            return None
 
     async def join_user_channel(self, user_id):
         if not self.is_ready(): await self.wait_until_ready()
@@ -169,6 +361,7 @@ class MusicBot(commands.Bot):
         self.current_title = data.get('title', 'Bilinmiyor')
         self.current_url = data.get('webpage_url', None)
         self.duration = data.get('duration', 0)
+        self.is_playing_from_cache = False  # Stream'den çalıyor
         
         header_str = "".join([f"{k}: {v}\r\n" for k, v in data.get('http_headers', {}).items()])
         before_args = FFMPEG_OPTIONS['before_options'] + f' -headers "{header_str}" -ss {start_sec}'
@@ -245,12 +438,13 @@ class MusicBot(commands.Bot):
             elapsed += (time.time() - self.playback_start_time)
         return int(elapsed)
 
-    async def pause_music(self):
+
+    def pause_music(self):
         if self.voice_client and self.voice_client.is_playing():
             self.accumulated_time += (time.time() - self.playback_start_time)
             self.voice_client.pause()
 
-    async def resume_music(self):
+    def resume_music(self):
         if self.voice_client and self.voice_client.is_paused():
             self.playback_start_time = time.time()
             self.voice_client.resume()
@@ -270,6 +464,8 @@ class MediaKeyListener:
     def __init__(self, app_instance):
         self.app = app_instance
         self.listener = None
+        self.last_press_time = 0  # Debounce için
+        self.debounce_delay = 0.2  # 200ms minimum süre
         
         # Config'den hotkey'i oku
         hotkey_name = CONFIG.get('HOTKEY', 'home').lower()
@@ -303,13 +499,20 @@ class MediaKeyListener:
         try:
             # Config'den okunan tuşu dinle
             if key == self.hotkey:
+                # Debounce kontrolü
+                current_time = time.time()
+                if current_time - self.last_press_time < self.debounce_delay:
+                    return  # Çok hızlı basılmış, yoksay
+                
+                self.last_press_time = current_time
                 logger.info("⏯ Hotkey: Play/Pause")
-                # Direkt bot fonksiyonunu çağır (hızlı)
+                
+                # Direkt bot fonksiyonunu çağır (hızlı - artık sync)
                 if bot.voice_client:
                     if bot.voice_client.is_playing():
-                        asyncio.run_coroutine_threadsafe(bot.pause_music(), bot.loop)
+                        bot.pause_music()
                     elif bot.voice_client.is_paused():
-                        asyncio.run_coroutine_threadsafe(bot.resume_music(), bot.loop)
+                        bot.resume_music()
         except AttributeError:
             pass
     
@@ -363,7 +566,8 @@ class App(ctk.CTk):
         self.fav_textbox = ctk.CTkTextbox(self.sidebar_frame, height=150, width=180, fg_color=("gray90", "gray15"))
         self.fav_textbox.grid(row=6, column=0, padx=20, pady=(0, 20), sticky="nsew")
         self.fav_textbox.configure(state="disabled")
-        self.fav_textbox.bind("<Button-1>", self.on_favorite_click)
+        self.fav_textbox.bind("<Button-1>", self.on_favorite_click)  # Sol tık: Çal
+        self.fav_textbox.bind("<Button-3>", self.on_favorite_click)  # Sağ tık: Sil
 
         # Ses Kontrolü
         self.lbl_vol = ctk.CTkLabel(self.sidebar_frame, text="Ses Düzeyi")
@@ -491,7 +695,7 @@ class App(ctk.CTk):
         self.fav_textbox.configure(state="disabled")
 
     def on_favorite_click(self, event):
-        """Favorilerden tıklanan şarkıyı çal"""
+        """Favorilerden tıklanan şarkıyı çal veya sil"""
         try:
             # Tıklanan satırı bul
             index = self.fav_textbox.index("@%s,%s" % (event.x, event.y))
@@ -500,10 +704,43 @@ class App(ctk.CTk):
             if 0 <= line_num < len(bot.favorites):
                 fav = bot.favorites[line_num]
                 url = fav.get('url')
-                if url:
+                title = fav.get('title', 'Bilinmiyor')
+                duration = fav.get('duration', 0)
+                
+                if not url:
+                    return
+                
+                # Sol tık: Çal
+                if event.num == 1:  # Left click
                     self.lbl_status.configure(text="Favoriden yükleniyor...", text_color="gold")
-                    asyncio.run_coroutine_threadsafe(self.update_info_task(url), bot.loop)
-        except: pass
+                    
+                    # Cache'de varsa cache'den çal, yoksa stream
+                    if bot.is_favorite_cached(url, title):
+                        asyncio.run_coroutine_threadsafe(
+                            self.play_from_cache_task(url, title, duration), 
+                            bot.loop
+                        )
+                    else:
+                        asyncio.run_coroutine_threadsafe(
+                            self.update_info_task(url), 
+                            bot.loop
+                        )
+                
+                # Sağ tık: Sil
+                elif event.num == 3:  # Right click
+                    # Onay penceresi göster
+                    result = ctk.CTkInputDialog(
+                        text=f"'{title[:40]}...' favorilerden silinsin mi?\n\n'evet' yazın:",
+                        title="Favoriden Sil"
+                    ).get_input()
+                    
+                    if result and result.lower() == 'evet':
+                        bot.remove_from_favorites(url)
+                        self.lbl_status.configure(text="Favorilerden silindi", text_color="orange")
+                        logger.info(f"🗑 Favoriden silindi: {title}")
+                        
+        except Exception as e:
+            logger.error(f"Favori tıklama hatası: {e}")
 
     def toggle_favorite(self):
         """Çalan şarkıyı favorilere ekle/çıkar"""
@@ -522,7 +759,23 @@ class App(ctk.CTk):
         value = self.slider_seek.get()
         if bot.current_url and bot.duration > 0:
             target_sec = int((value / 100) * bot.duration)
-            asyncio.run_coroutine_threadsafe(bot.play_music(bot.current_url, start_sec=target_sec), bot.loop)
+            
+            # Cache'den çalıyorsa cache'den seek et
+            if bot.is_playing_from_cache and bot.is_favorite_cached(bot.current_url, bot.current_title):
+                # Favori bilgilerini bul
+                fav = next((f for f in bot.favorites if f.get('url') == bot.current_url), None)
+                if fav:
+                    asyncio.run_coroutine_threadsafe(
+                        bot.play_from_cache(bot.current_url, fav.get('title'), fav.get('duration', 0), start_sec=target_sec),
+                        bot.loop
+                    )
+                else:
+                    # Favori değilse stream'den seek et
+                    asyncio.run_coroutine_threadsafe(bot.play_music(bot.current_url, start_sec=target_sec), bot.loop)
+            else:
+                # Stream'den çalıyorsa normal seek
+                asyncio.run_coroutine_threadsafe(bot.play_music(bot.current_url, start_sec=target_sec), bot.loop)
+                
         self.after(500, lambda: setattr(self, 'is_seeking', False))
 
     def change_volume(self, value):
@@ -531,10 +784,10 @@ class App(ctk.CTk):
     def toggle_pause(self):
         if self.btn_play.cget("text") == "DURAKLAT ⏸": 
             self.btn_play.configure(text="DEVAM ET ▶", fg_color="#3B8ED0", hover_color="#36719F")
-            asyncio.run_coroutine_threadsafe(bot.pause_music(), bot.loop)
+            bot.pause_music()
         else:
             self.btn_play.configure(text="DURAKLAT ⏸", fg_color="#E67E22", hover_color="#D35400") # Turuncu tonları
-            asyncio.run_coroutine_threadsafe(bot.resume_music(), bot.loop)
+            bot.resume_music()
 
     def toggle_loop(self):
         bot.loop_mode = bool(self.switch_loop.get())
@@ -596,6 +849,15 @@ class App(ctk.CTk):
         else:
             self.lbl_status.configure(text="Hata: Sonuç bulunamadı veya bağlantı yok", text_color="red")
             self.btn_play.configure(text="OYNAT ▶", fg_color="#3B8ED0")
+
+    async def play_from_cache_task(self, url, title, duration):
+        """Cache'den oynatma task'ı"""
+        result = await bot.play_from_cache(url, title, duration)
+        if result:
+            self.lbl_status.configure(text="💾 Cache'den oynatılıyor", text_color="#3B8ED0")
+            self.btn_play.configure(text="DURAKLAT ⏸", fg_color="#E67E22", hover_color="#D35400")
+        else:
+            self.lbl_status.configure(text="Cache hatası, stream'e geçildi", text_color="orange")
 
     def on_closing(self):
         try:

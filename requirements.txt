@@ -2,5 +2,4 @@ discord.py
 yt-dlp
 customtkinter
 PyNaCl
-ffmpeg-python
 pynput
