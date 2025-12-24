@@ -560,7 +560,7 @@ class App(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("Antigravity Control")
-        self.geometry("700x500") # Geniş ve ferah
+        self.geometry("800x600")  # Menülerin sığması için büyütüldü
         ctk.set_appearance_mode("Dark")
         ctk.set_default_color_theme("dark-blue") # Daha profesyonel mavi tonları
 
@@ -570,7 +570,6 @@ class App(ctk.CTk):
         # --- SOL PANEL (SIDEBAR) ---
         self.sidebar_frame = ctk.CTkFrame(self, width=200, corner_radius=0)
         self.sidebar_frame.grid(row=0, column=0, sticky="nsew")
-        self.sidebar_frame.grid_rowconfigure(4, weight=1)
 
         self.logo_label = ctk.CTkLabel(self.sidebar_frame, text="ANTIGRAVITY", font=ctk.CTkFont(size=20, weight="bold"))
         self.logo_label.grid(row=0, column=0, padx=20, pady=(20, 10))
@@ -582,28 +581,28 @@ class App(ctk.CTk):
         self.lbl_status.grid(row=2, column=0, padx=20, pady=10)
 
         # Sıra (Queue) Bölümü
-        self.lbl_queue_title = ctk.CTkLabel(self.sidebar_frame, text="SIRA", font=ctk.CTkFont(size=12, weight="bold"))
-        self.lbl_queue_title.grid(row=3, column=0, padx=20, pady=(20, 5), sticky="w")
+        self.lbl_queue_title = ctk.CTkLabel(self.sidebar_frame, text="SIRA", font=ctk.CTkFont(size=11, weight="bold"))
+        self.lbl_queue_title.grid(row=3, column=0, padx=20, pady=(15, 5), sticky="w")
         
-        self.queue_textbox = ctk.CTkTextbox(self.sidebar_frame, height=200, width=180, fg_color=("gray90", "gray15"))
-        self.queue_textbox.grid(row=4, column=0, padx=20, pady=(0, 20), sticky="nsew")
+        self.queue_textbox = ctk.CTkTextbox(self.sidebar_frame, height=130, width=180, fg_color=("gray90", "gray15"))
+        self.queue_textbox.grid(row=4, column=0, padx=20, pady=(0, 15))
         self.queue_textbox.configure(state="disabled")  # Sadece okuma modu
 
         # Favoriler Bölümü
-        self.lbl_fav_title = ctk.CTkLabel(self.sidebar_frame, text="FAVORİLER", font=ctk.CTkFont(size=12, weight="bold"))
-        self.lbl_fav_title.grid(row=5, column=0, padx=20, pady=(10, 5), sticky="w")
+        self.lbl_fav_title = ctk.CTkLabel(self.sidebar_frame, text="FAVORİLER", font=ctk.CTkFont(size=11, weight="bold"))
+        self.lbl_fav_title.grid(row=5, column=0, padx=20, pady=(5, 5), sticky="w")
         
-        self.fav_textbox = ctk.CTkTextbox(self.sidebar_frame, height=150, width=180, fg_color=("gray90", "gray15"))
-        self.fav_textbox.grid(row=6, column=0, padx=20, pady=(0, 20), sticky="nsew")
+        self.fav_textbox = ctk.CTkTextbox(self.sidebar_frame, height=110, width=180, fg_color=("gray90", "gray15"))
+        self.fav_textbox.grid(row=6, column=0, padx=20, pady=(0, 15))
         self.fav_textbox.configure(state="disabled")
         self.fav_textbox.bind("<Button-1>", self.on_favorite_click)  # Sol tık: Çal
         self.fav_textbox.bind("<Button-3>", self.on_favorite_click)  # Sağ tık: Sil
 
         # Ses Kontrolü
-        self.lbl_vol = ctk.CTkLabel(self.sidebar_frame, text="Ses Düzeyi")
-        self.lbl_vol.grid(row=7, column=0, padx=20, pady=(10, 0))
+        self.lbl_vol = ctk.CTkLabel(self.sidebar_frame, text="Ses Düzeyi", font=ctk.CTkFont(size=11))
+        self.lbl_vol.grid(row=7, column=0, padx=20, pady=(5, 5))
         self.slider_vol = ctk.CTkSlider(self.sidebar_frame, from_=0, to=1, command=self.change_volume)
-        self.slider_vol.grid(row=8, column=0, padx=20, pady=(0, 20))
+        self.slider_vol.grid(row=8, column=0, padx=20, pady=(0, 15))
         self.slider_vol.set(1.0)
 
         # --- SAĞ PANEL (CONTENT) ---
