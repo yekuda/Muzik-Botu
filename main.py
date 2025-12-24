@@ -57,6 +57,7 @@ class MusicBot(commands.Bot):
         self.is_playing_from_cache = False  # Cache'den mi çalıyor
         self.favorites = self.load_favorites()
         self.clean_orphaned_cache()
+        self._cache_check_done = False  # Cache kontrolü yapıldı mı?
 
     def load_favorites(self):
         """Favorileri JSON'dan yükle"""
@@ -104,10 +105,7 @@ class MusicBot(commands.Bot):
             
             # Zaten cache'de varsa indirme
             if os.path.exists(cache_path):
-                logger.info(f"✓ Zaten cache'de: {title}")
                 return cache_path
-
-            logger.info(f"⬇ Cache'e indiriliyor: {title}")
             
             # yt-dlp ile indir (FFmpegExtractAudio .mp3 ekleyeceği için outtmpl'den .mp3'ü çıkar)
             cache_path_without_ext = cache_path.replace('.mp3', '')
@@ -127,7 +125,6 @@ class MusicBot(commands.Bot):
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 await loop.run_in_executor(None, lambda: ydl.download([url]))
             
-            logger.info(f"✓ Cache'e indirildi: {title}")
             return cache_path
             
         except Exception as e:
@@ -210,8 +207,41 @@ class MusicBot(commands.Bot):
         except Exception as e:
             logger.error(f"Cache silme hatası: {e}")
 
+    async def check_favorites_cache(self):
+        """Favorilerin cache'de olup olmadığını kontrol et ve eksikleri indir"""
+        if not self.favorites:
+            return
+        
+        logger.info(f"🔍 Favoriler kontrol ediliyor ({len(self.favorites)} adet)...")
+        
+        missing_count = 0
+        cached_count = 0
+        
+        for fav in self.favorites:
+            url = fav.get('url')
+            title = fav.get('title')
+            
+            if not url or not title:
+                continue
+            
+            # Cache'de var mı kontrol et
+            if self.is_favorite_cached(url, title):
+                cached_count += 1
+            else:
+                missing_count += 1
+                # Arka planda indir
+                await self.download_favorite_to_cache(url, title)
+        
+        if missing_count > 0:
+            logger.info(f"✅ Cache hazır: {cached_count} mevcut, {missing_count} indirildi")
+
+
     async def on_ready(self):
         print(f"\n⚡ SİSTEM HAZIR: {self.user}\n")
+        # Favorilerin cache kontrolünü yap
+        if not self._cache_check_done:
+            self._cache_check_done = True
+            asyncio.create_task(self.check_favorites_cache())
 
     async def play_from_cache(self, url, title, duration, start_sec=0):
         """Cache'den direkt oynat"""
