@@ -559,116 +559,212 @@ class MediaKeyListener:
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("Antigravity Control")
+        self.title("Antigravity Music")
         self.geometry("800x600")  # Menülerin sığması için büyütüldü
         ctk.set_appearance_mode("Dark")
-        ctk.set_default_color_theme("dark-blue") # Daha profesyonel mavi tonları
+        ctk.set_default_color_theme("dark-blue")
+        
+        # Modern siyah minimalist renk paleti
+        self.colors = {
+            'bg': '#0a0a0a',           # Ana arka plan - derin siyah
+            'sidebar': '#141414',       # Sidebar - hafif daha açık siyah
+            'card': '#1a1a1a',         # Kartlar - koyu gri
+            'accent': '#ffffff',        # Vurgu rengi - beyaz
+            'accent_dim': '#888888',    # Soluk vurgu - gri
+            'button': '#252525',        # Butonlar - koyu gri
+            'button_hover': '#303030'   # Buton hover - daha açık gri
+        }
+        
+        self.configure(fg_color=self.colors['bg'])
 
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
         # --- SOL PANEL (SIDEBAR) ---
-        self.sidebar_frame = ctk.CTkFrame(self, width=200, corner_radius=0)
+        self.sidebar_frame = ctk.CTkFrame(self, width=200, corner_radius=0, fg_color=self.colors['sidebar'])
         self.sidebar_frame.grid(row=0, column=0, sticky="nsew")
 
-        self.logo_label = ctk.CTkLabel(self.sidebar_frame, text="ANTIGRAVITY", font=ctk.CTkFont(size=20, weight="bold"))
-        self.logo_label.grid(row=0, column=0, padx=20, pady=(20, 10))
+        self.logo_label = ctk.CTkLabel(self.sidebar_frame, text="♪ ANTIGRAVITY", 
+                                       font=ctk.CTkFont(size=20, weight="bold"),
+                                       text_color=self.colors['accent'])
+        self.logo_label.grid(row=0, column=0, padx=20, pady=(25, 10))
 
-        self.sidebar_button_1 = ctk.CTkButton(self.sidebar_frame, text="Bağlan / Katıl", command=self.join_voice)
+        self.sidebar_button_1 = ctk.CTkButton(self.sidebar_frame, text="Bağlan", 
+                                             command=self.join_voice,
+                                             fg_color=self.colors['button'],
+                                             hover_color=self.colors['button_hover'],
+                                             border_width=0,
+                                             height=32,
+                                             corner_radius=6)
         self.sidebar_button_1.grid(row=1, column=0, padx=20, pady=10)
 
-        self.lbl_status = ctk.CTkLabel(self.sidebar_frame, text="Durum: Çevrimdışı", text_color="gray", wraplength=180)
-        self.lbl_status.grid(row=2, column=0, padx=20, pady=10)
+        self.lbl_status = ctk.CTkLabel(self.sidebar_frame, text="Çevrimdışı", 
+                                      text_color=self.colors['accent_dim'], 
+                                      wraplength=180,
+                                      font=ctk.CTkFont(size=10))
+        self.lbl_status.grid(row=2, column=0, padx=20, pady=(0, 15))
 
         # Sıra (Queue) Bölümü
-        self.lbl_queue_title = ctk.CTkLabel(self.sidebar_frame, text="SIRA", font=ctk.CTkFont(size=11, weight="bold"))
-        self.lbl_queue_title.grid(row=3, column=0, padx=20, pady=(15, 5), sticky="w")
+        self.lbl_queue_title = ctk.CTkLabel(self.sidebar_frame, text="SIRA", 
+                                           font=ctk.CTkFont(size=10, weight="bold"),
+                                           text_color=self.colors['accent_dim'])
+        self.lbl_queue_title.grid(row=3, column=0, padx=20, pady=(10, 5), sticky="w")
         
-        self.queue_textbox = ctk.CTkTextbox(self.sidebar_frame, height=130, width=180, fg_color=("gray90", "gray15"))
-        self.queue_textbox.grid(row=4, column=0, padx=20, pady=(0, 15))
-        self.queue_textbox.configure(state="disabled")  # Sadece okuma modu
+        self.queue_textbox = ctk.CTkTextbox(self.sidebar_frame, height=130, width=180, 
+                                           fg_color=self.colors['bg'],
+                                           border_width=1,
+                                           border_color=self.colors['button'],
+                                           corner_radius=6)
+        self.queue_textbox.grid(row=4, column=0, padx=20, pady=(0, 12))
+        self.queue_textbox.configure(state="disabled")
 
         # Favoriler Bölümü
-        self.lbl_fav_title = ctk.CTkLabel(self.sidebar_frame, text="FAVORİLER", font=ctk.CTkFont(size=11, weight="bold"))
+        self.lbl_fav_title = ctk.CTkLabel(self.sidebar_frame, text="FAVORİLER", 
+                                         font=ctk.CTkFont(size=10, weight="bold"),
+                                         text_color=self.colors['accent_dim'])
         self.lbl_fav_title.grid(row=5, column=0, padx=20, pady=(5, 5), sticky="w")
         
-        self.fav_textbox = ctk.CTkTextbox(self.sidebar_frame, height=110, width=180, fg_color=("gray90", "gray15"))
-        self.fav_textbox.grid(row=6, column=0, padx=20, pady=(0, 15))
+        self.fav_textbox = ctk.CTkTextbox(self.sidebar_frame, height=110, width=180, 
+                                         fg_color=self.colors['bg'],
+                                         border_width=1,
+                                         border_color=self.colors['button'],
+                                         corner_radius=6)
+        self.fav_textbox.grid(row=6, column=0, padx=20, pady=(0, 12))
         self.fav_textbox.configure(state="disabled")
-        self.fav_textbox.bind("<Button-1>", self.on_favorite_click)  # Sol tık: Çal
-        self.fav_textbox.bind("<Button-3>", self.on_favorite_click)  # Sağ tık: Sil
+        self.fav_textbox.bind("<Button-1>", self.on_favorite_click)
+        self.fav_textbox.bind("<Button-3>", self.on_favorite_click)
 
         # Ses Kontrolü
-        self.lbl_vol = ctk.CTkLabel(self.sidebar_frame, text="Ses Düzeyi", font=ctk.CTkFont(size=11))
-        self.lbl_vol.grid(row=7, column=0, padx=20, pady=(5, 5))
-        self.slider_vol = ctk.CTkSlider(self.sidebar_frame, from_=0, to=1, command=self.change_volume)
-        self.slider_vol.grid(row=8, column=0, padx=20, pady=(0, 15))
+        self.lbl_vol = ctk.CTkLabel(self.sidebar_frame, text="SES", 
+                                   font=ctk.CTkFont(size=10, weight="bold"),
+                                   text_color=self.colors['accent_dim'])
+        self.lbl_vol.grid(row=7, column=0, padx=20, pady=(5, 5), sticky="w")
+        self.slider_vol = ctk.CTkSlider(self.sidebar_frame, from_=0, to=1, 
+                                       command=self.change_volume,
+                                       fg_color=self.colors['button'],
+                                       progress_color=self.colors['accent'],
+                                       button_color=self.colors['accent'],
+                                       button_hover_color=self.colors['accent_dim'],
+                                       height=14)
+        self.slider_vol.grid(row=8, column=0, padx=20, pady=(0, 20))
         self.slider_vol.set(1.0)
 
         # --- SAĞ PANEL (CONTENT) ---
-        self.main_frame = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
+        self.main_frame = ctk.CTkFrame(self, corner_radius=0, fg_color=self.colors['bg'])
         self.main_frame.grid(row=0, column=1, sticky="nsew", padx=20, pady=20)
         self.main_frame.grid_rowconfigure(2, weight=1)
 
         # Arama Kısmı
-        self.entry_search = ctk.CTkEntry(self.main_frame, placeholder_text="Müzik ara veya link yapıştır...", height=40)
-        self.entry_search.pack(fill="x", pady=(0, 10))
+        self.entry_search = ctk.CTkEntry(self.main_frame, 
+                                        placeholder_text="Şarkı ara veya YouTube linki...", 
+                                        height=42,
+                                        fg_color=self.colors['card'],
+                                        border_width=0,
+                                        corner_radius=8,
+                                        font=ctk.CTkFont(size=13))
+        self.entry_search.pack(fill="x", pady=(0, 12))
         self.entry_search.bind("<Return>", lambda e: self.play_track())
 
         # Buton Frame (Oynat ve Sıraya Ekle yan yana)
         self.search_btn_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
-        self.search_btn_frame.pack(fill="x", pady=(0, 20))
+        self.search_btn_frame.pack(fill="x", pady=(0, 18))
         
-        self.btn_search = ctk.CTkButton(self.search_btn_frame, text="▶ OYNAT", fg_color="#3B8ED0", hover_color="#36719F", command=self.play_track)
-        self.btn_search.pack(side="left", fill="x", expand=True, padx=(0, 5))
+        self.btn_search = ctk.CTkButton(self.search_btn_frame, text="▶ OYNAT", 
+                                       fg_color=self.colors['accent'], 
+                                       hover_color=self.colors['accent_dim'],
+                                       text_color="#000000",
+                                       height=38,
+                                       corner_radius=8,
+                                       font=ctk.CTkFont(size=13, weight="bold"),
+                                       command=self.play_track)
+        self.btn_search.pack(side="left", fill="x", expand=True, padx=(0, 6))
         
-        self.btn_add_queue = ctk.CTkButton(self.search_btn_frame, text="+ SIRAYA EKLE", fg_color="transparent", border_width=2, border_color="gray", text_color="white", command=self.add_to_queue)
-        self.btn_add_queue.pack(side="right", fill="x", expand=True, padx=(5, 0))
+        self.btn_add_queue = ctk.CTkButton(self.search_btn_frame, text="+ SIRAYA EKLE", 
+                                          fg_color=self.colors['button'], 
+                                          hover_color=self.colors['button_hover'],
+                                          text_color=self.colors['accent'],
+                                          border_width=0,
+                                          height=38,
+                                          corner_radius=8,
+                                          font=ctk.CTkFont(size=12),
+                                          command=self.add_to_queue)
+        self.btn_add_queue.pack(side="right", fill="x", expand=True, padx=(6, 0))
 
         # Şarkı Bilgi Kartı
-        self.track_card = ctk.CTkFrame(self.main_frame, fg_color=("gray80", "gray20"))
+        self.track_card = ctk.CTkFrame(self.main_frame, fg_color=self.colors['card'], corner_radius=10)
         self.track_card.pack(fill="both", expand=True)
         
-        self.lbl_playing = ctk.CTkLabel(self.track_card, text="ŞU AN ÇALINIYOR", font=ctk.CTkFont(size=12, weight="bold"))
-        self.lbl_playing.pack(pady=(20, 0))
+        self.lbl_playing = ctk.CTkLabel(self.track_card, text="NOW PLAYING", 
+                                       font=ctk.CTkFont(size=10, weight="bold"),
+                                       text_color=self.colors['accent_dim'])
+        self.lbl_playing.pack(pady=(25, 5))
         
-        self.lbl_title = ctk.CTkLabel(self.track_card, text="---", font=ctk.CTkFont(size=18), wraplength=400)
-        self.lbl_title.pack(pady=10)
+        self.lbl_title = ctk.CTkLabel(self.track_card, text="---", 
+                                     font=ctk.CTkFont(size=19, weight="bold"), 
+                                     wraplength=450,
+                                     text_color=self.colors['accent'])
+        self.lbl_title.pack(pady=(5, 12))
 
-        self.lbl_timer = ctk.CTkLabel(self.track_card, text="00:00 / 00:00", font=ctk.CTkFont(family="monospace", size=14))
-        self.lbl_timer.pack(pady=5)
+        self.lbl_timer = ctk.CTkLabel(self.track_card, text="00:00 / 00:00", 
+                                     font=ctk.CTkFont(family="Consolas", size=12),
+                                     text_color=self.colors['accent_dim'])
+        self.lbl_timer.pack(pady=(0, 10))
 
-        self.slider_seek = ctk.CTkSlider(self.track_card, from_=0, to=100, command=self.on_seek_drag, height=20)
-        self.slider_seek.pack(fill="x", padx=40, pady=10)
+        self.slider_seek = ctk.CTkSlider(self.track_card, from_=0, to=100, 
+                                        command=self.on_seek_drag, 
+                                        height=5,
+                                        fg_color=self.colors['button'],
+                                        progress_color=self.colors['accent'],
+                                        button_color=self.colors['accent'],
+                                        button_hover_color=self.colors['accent_dim'])
+        self.slider_seek.pack(fill="x", padx=45, pady=(0, 22))
         self.slider_seek.bind("<Button-1>", lambda e: setattr(self, 'is_seeking', True))
         self.slider_seek.bind("<ButtonRelease-1>", self.on_seek_release)
         self.is_seeking = False
 
         # Alt Kontroller
         self.controls_frame = ctk.CTkFrame(self.track_card, fg_color="transparent")
-        self.controls_frame.pack(pady=20)
+        self.controls_frame.pack(pady=(0, 25))
 
-        # İşlevsiz prev butonu kaldırıldı
-
-        self.btn_play = ctk.CTkButton(self.controls_frame, text="OYNAT ▶", width=120, height=40, 
-                                      fg_color="#3B8ED0", hover_color="#36719F",
-                                      command=self.toggle_pause)
-        self.btn_play.pack(side="left", padx=20)
+        self.btn_play = ctk.CTkButton(self.controls_frame, text="▶", 
+                                     width=52, height=52, 
+                                     fg_color=self.colors['accent'], 
+                                     hover_color=self.colors['accent_dim'],
+                                     text_color="#000000",
+                                     corner_radius=26,
+                                     font=ctk.CTkFont(size=16),
+                                     command=self.toggle_pause)
+        self.btn_play.pack(side="left", padx=10)
         
-        self.btn_skip = ctk.CTkButton(self.controls_frame, text="⏭", width=50, height=40, 
-                                      fg_color="transparent", border_width=1, border_color="gray", text_color="white",
-                                      command=self.skip_track)
-        self.btn_skip.pack(side="left", padx=10)
+        self.btn_skip = ctk.CTkButton(self.controls_frame, text="⏭", 
+                                     width=40, height=40, 
+                                     fg_color=self.colors['button'], 
+                                     hover_color=self.colors['button_hover'],
+                                     text_color=self.colors['accent'],
+                                     corner_radius=20,
+                                     font=ctk.CTkFont(size=14),
+                                     command=self.skip_track)
+        self.btn_skip.pack(side="left", padx=6)
         
-        self.btn_favorite = ctk.CTkButton(self.controls_frame, text="⭐", width=50, height=40,
-                                         fg_color="transparent", border_width=1, border_color="gold", text_color="gold",
+        self.btn_favorite = ctk.CTkButton(self.controls_frame, text="⭐", 
+                                         width=40, height=40,
+                                         fg_color=self.colors['button'], 
+                                         hover_color=self.colors['button_hover'],
+                                         text_color="#FFD700",
+                                         corner_radius=20,
+                                         font=ctk.CTkFont(size=14),
                                          command=self.toggle_favorite)
-        self.btn_favorite.pack(side="left", padx=10)
-
-        # Durdur butonu kaldırıldı
+        self.btn_favorite.pack(side="left", padx=6)
         
-        self.switch_loop = ctk.CTkSwitch(self.controls_frame, text="Döngü", command=self.toggle_loop)
-        self.switch_loop.pack(side="left", padx=20)
+        self.switch_loop = ctk.CTkSwitch(self.controls_frame, text="Döngü", 
+                                        command=self.toggle_loop,
+                                        fg_color=self.colors['button'],
+                                        progress_color=self.colors['accent'],
+                                        button_color=self.colors['accent'],
+                                        button_hover_color=self.colors['accent_dim'],
+                                        text_color=self.colors['accent_dim'],
+                                        font=ctk.CTkFont(size=11))
+        self.switch_loop.pack(side="left", padx=12)
 
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
         
@@ -811,11 +907,11 @@ class App(ctk.CTk):
         asyncio.run_coroutine_threadsafe(bot.set_volume(value), bot.loop)
 
     def toggle_pause(self):
-        if self.btn_play.cget("text") == "DURAKLAT ⏸": 
-            self.btn_play.configure(text="DEVAM ET ▶", fg_color="#3B8ED0", hover_color="#36719F")
+        if self.btn_play.cget("text") == "⏸": 
+            self.btn_play.configure(text="▶")
             bot.pause_music()
         else:
-            self.btn_play.configure(text="DURAKLAT ⏸", fg_color="#E67E22", hover_color="#D35400") # Turuncu tonları
+            self.btn_play.configure(text="⏸")
             bot.resume_music()
 
     def toggle_loop(self):
@@ -827,7 +923,7 @@ class App(ctk.CTk):
             bot.voice_client.stop()
             bot.current_url = None
             threading.Timer(1.0, lambda: setattr(bot, '_manual_stop', False)).start()
-        self.btn_play.configure(text="OYNAT ▶", fg_color="#3B8ED0")
+        self.btn_play.configure(text="▶")
         self.slider_seek.set(0)
         self.lbl_timer.configure(text="00:00 / 00:00")
 
@@ -867,26 +963,26 @@ class App(ctk.CTk):
     def play_track(self):
         query = self.entry_search.get()
         if query:
-            self.lbl_status.configure(text="Yükleniyor...", text_color="orange")
-            self.btn_play.configure(text="DURAKLAT ⏸", fg_color="#E67E22", hover_color="#D35400")
+            self.lbl_status.configure(text="Yükleniyor...", text_color=self.colors['accent_dim'])
+            self.btn_play.configure(text="⏸")
             asyncio.run_coroutine_threadsafe(self.update_info_task(query), bot.loop)
 
     async def update_info_task(self, query):
         title = await bot.play_music(query)
         if title:
-            self.lbl_status.configure(text="Oynatılıyor", text_color="#3B8ED0")
+            self.lbl_status.configure(text="Oynatılıyor", text_color=self.colors['accent'])
         else:
-            self.lbl_status.configure(text="Hata: Sonuç bulunamadı veya bağlantı yok", text_color="red")
-            self.btn_play.configure(text="OYNAT ▶", fg_color="#3B8ED0")
+            self.lbl_status.configure(text="Hata: Sonuç bulunamadı", text_color="#ff4444")
+            self.btn_play.configure(text="▶")
 
     async def play_from_cache_task(self, url, title, duration):
         """Cache'den oynatma task'ı"""
         result = await bot.play_from_cache(url, title, duration)
         if result:
-            self.lbl_status.configure(text="💾 Cache'den oynatılıyor", text_color="#3B8ED0")
-            self.btn_play.configure(text="DURAKLAT ⏸", fg_color="#E67E22", hover_color="#D35400")
+            self.lbl_status.configure(text="💾 Cache'den oynatılıyor", text_color=self.colors['accent'])
+            self.btn_play.configure(text="⏸")
         else:
-            self.lbl_status.configure(text="Cache hatası, stream'e geçildi", text_color="orange")
+            self.lbl_status.configure(text="Cache hatası", text_color="#ff4444")
 
     def on_closing(self):
         try:
