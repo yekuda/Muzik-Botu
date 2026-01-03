@@ -3,3 +3,4 @@ yt-dlp
 customtkinter
 PyNaCl
 pynput
+edge-tts
