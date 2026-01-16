@@ -19,7 +19,13 @@ Premium Discord müzik deneyimi için tasarlanmış, minimalist ve yüksek perfo
 
 ## KURULUM
 
-1. **Bağımlılıklar**
+1. **Projeyi Klonlayın**
+   ```bash
+   git clone https://github.com/yakupemreyerli/senfoni-music-bot.git
+   cd senfoni-music-bot
+   ```
+
+2. **Bağımlılıklar**
    ```bash
    pip install -r requirements.txt
    ```
